@@ -1,150 +1,348 @@
 <!DOCTYPE html>
-<html lang="id"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Pancing HP</title>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pancing HP - Motion Detector</title>
 <style>
-:root{--bg:#0e2a33;--fg:#eaf3ee;--ac:#f2a541;--w:#14505f}
-html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--fg);font:16px Georgia,serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:12px;box-sizing:border-box}
-h2{margin:0;font-size:28px}
-button{font:inherit;font-weight:700;padding:16px 30px;border:0;border-radius:10px;background:var(--ac);color:#1a1205}
-canvas{width:100%;max-width:880px;background:var(--w);border-radius:10px}
-#qr{background:#fff;padding:10px;display:inline-block;border-radius:6px}
-#url{font-size:11px;word-break:break-all;max-width:340px;opacity:.7}
-.hide{display:none}
-</style></head><body>
+:root { --bg: #0e2a33; --fg: #eaf3ee; --ac: #f2a541; --w: #14505f; --danger: #e63946; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px Georgia, serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 12px; box-sizing: border-box; }
+h2 { margin: 0; font-size: 26px; }
+button { font: inherit; font-weight: 700; padding: 16px 28px; border: 0; border-radius: 10px; background: var(--ac); color: #1a1205; cursor: pointer; }
+canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10px; }
+#qr { background: #fff; padding: 10px; display: inline-block; border-radius: 6px; }
+#url { font-size: 11px; word-break: break-all; max-width: 340px; opacity: .7; }
+.hide { display: none !important; }
+
+/* Dashboard Pengukur Motion di HP */
+.meter-box { width: 100%; max-width: 320px; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; box-sizing: border-box; text-align: left; font-size: 13px; font-family: monospace; }
+.bar-bg { background: rgba(255,255,255,0.2); height: 14px; border-radius: 7px; overflow: hidden; margin-top: 4px; }
+.bar-fill { background: var(--ac); height: 100%; width: 0%; transition: width 0.05s linear; }
+.bar-fill.hit { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- TAMPILAN LAPTOP / HOST -->
 <div id="host" class="hide">
- <div id="panel">
-  <h2>Pancing HP</h2>
-  <p>Scan dengan HP untuk jadi joran:</p>
-  <div id="qr"></div>
-  <p id="url"></p>
-  <p>Tes tanpa HP: Spasi = hentak, tahan R = menggulung, panah kiri/kanan = arah</p>
- </div>
- <canvas id="cv" width="800" height="450"></canvas>
+  <div id="panel">
+    <h2>Pancing HP</h2>
+    <p>Scan QR Code dengan HP untuk dijadikan joran:</p>
+    <div id="qr"></div>
+    <p id="url"></p>
+    <p style="font-size: 13px; opacity: 0.8;">Atau tes tanpa HP: [Spasi] = Hentak | Tahan [R] = Gulung | [Panah] = Arah</p>
+  </div>
+  <canvas id="cv" width="800" height="450"></canvas>
 </div>
+
+<!-- TAMPILAN HP / CONTROLLER -->
 <div id="ctl" class="hide">
- <h2>Joran</h2>
- <button id="go">Mulai dan izinkan sensor</button>
+  <h2>Joran HP</h2>
+  <p id="ctl-desc">Klik tombol di bawah untuk mengaktifkan sensor dan terhubung.</p>
+  <button id="go">Mulai & Izinkan Sensor</button>
+  
+  <!-- VISUALIZER MOTION (PENGUKUR GERAKAN) -->
+  <div id="motion-debug" class="meter-box hide" style="margin-top: 15px;">
+    <div>Hentakan (Acc): <span id="val-acc">0.0</span></div>
+    <div class="bar-bg"><div id="bar-acc" class="bar-fill"></div></div>
+    
+    <div style="margin-top: 8px;">Putaran (Rot): <span id="val-rot">0</span></div>
+    <div class="bar-bg"><div id="bar-rot" class="bar-fill"></div></div>
+
+    <div style="margin-top: 8px;">Miring (Gamma): <span id="val-g">0°</span></div>
+  </div>
 </div>
-<p id="st"></p>
-<p id="dbg" style="opacity:.6;font-size:13px"></p>
+
+<p id="st" style="font-weight: bold; margin-top: 10px;"></p>
+<p id="dbg" style="opacity:.6; font-size:13px"></p>
+
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
-const $=id=>document.getElementById(id), log=m=>$('st').textContent=m;
-const cid=new URLSearchParams(location.search).get('c');
-function beep(f,d){try{const c=beep.c||(beep.c=new(window.AudioContext||webkitAudioContext)());const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;g.gain.value=.1;o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+d)}catch(e){}}
-cid?controller():host();
+const $ = id => document.getElementById(id);
+const log = m => $('st').textContent = m;
+const cid = new URLSearchParams(location.search).get('c');
 
-function controller(){
- $('ctl').classList.remove('hide');
- let conn,last=0,s={g:0,b:0};
- $('go').onclick=async()=>{
-  try{const D=window.DeviceMotionEvent;if(D&&D.requestPermission&&await D.requestPermission()!=='granted')return log('Izin sensor ditolak')}catch(e){return log('Izin gagal: '+e)}
-  beep(1,.01);log('Menghubungkan...');
-  const p=new Peer();
-  p.on('error',e=>log('Error: '+e.type));
-  p.on('open',()=>{
-   conn=p.connect(cid,{serialization:'json'});
-   conn.on('open',()=>{$('go').classList.add('hide');log('Terhubung. Pegang HP seperti joran.');run()});
-   conn.on('close',()=>log('Terputus'));
-   conn.on('data',d=>{
-    if(d.t==='bite'){navigator.vibrate&&navigator.vibrate([200,80,200]);beep(880,.25)}
-    if(d.t==='msg')log(d.m);
-   });
-  });
- };
- function run(){
-  addEventListener('deviceorientation',e=>{s.g=e.gamma||0;s.b=e.beta||0});
-  let got=0;
-  setTimeout(()=>{if(!got)log('Sensor gerak tidak terbaca. Cek izin Motion sensors di pengaturan situs browser.')},2500);
-  addEventListener('devicemotion',e=>{
-   got=1;
-   const n=performance.now();if(n-last<33||!conn.open)return;last=n;
-   const a=e.acceleration,ag=e.accelerationIncludingGravity,r=e.rotationRate||{};
-   const acc=a&&a.x!=null?Math.hypot(a.x,a.y,a.z):(ag?Math.abs(Math.hypot(ag.x,ag.y,ag.z)-9.8):0);
-   const rr=Math.hypot(r.alpha||0,r.beta||0,r.gamma||0);
-   conn.send({a:acc,r:rr,g:s.g});
-   $('dbg').textContent='a '+acc.toFixed(1)+'  r '+rr.toFixed(0)+'  g '+s.g.toFixed(0);
-  });
- }
+function beep(f, d) {
+  try {
+    const c = beep.c || (beep.c = new (window.AudioContext || webkitAudioContext)());
+    const o = c.createOscillator(), g = c.createGain();
+    o.frequency.value = f; g.gain.value = .1;
+    o.connect(g); g.connect(c.destination);
+    o.start(); o.stop(c.currentTime + d);
+  } catch(e) {}
 }
 
-function host(){
- $('host').classList.remove('hide');
- const id='pancing-'+Math.random().toString(36).slice(2,7);
- const url=location.href.split('?')[0]+'?c='+id;
- let conn=null,inp={a:0,r:0,g:0};
- try{
-  const p=new Peer(id);
-  p.on('open',()=>{new QRCode($('qr'),{text:url,width:180,height:180});$('url').textContent=url});
-  p.on('error',e=>log('Koneksi HP tidak tersedia ('+e.type+'). Mode keyboard tetap jalan.'));
-  p.on('connection',c=>{conn=c;c.on('data',d=>inp=d);$('panel').classList.add('hide');log('HP terhubung');say(msg)});
- }catch(e){log('PeerJS gagal dimuat. Mode keyboard tetap jalan.')}
+if (cid) {
+  controller();
+} else {
+  host();
+}
 
- const key={sp:false,r:false};let kx=0;
- addEventListener('keydown',e=>{
-  if(e.key===' '){key.sp=true;e.preventDefault()}
-  if(e.key==='r')key.r=true;
-  if(e.key==='ArrowLeft')kx=Math.max(-.4,kx-.05);
-  if(e.key==='ArrowRight')kx=Math.min(.4,kx+.05);
-  $('panel').classList.add('hide');
- });
- addEventListener('keyup',e=>{if(e.key===' ')key.sp=false;if(e.key==='r')key.r=false});
+// ==========================================
+// KODE CONTROLLER (HP)
+// ==========================================
+function controller() {
+  $('ctl').classList.remove('hide');
+  let conn, last = 0, s = { g: 0, b: 0 };
 
- const cv=$('cv'),x=cv.getContext('2d');
- let S='idle',t=0,cool=0,fish=1,tens=0,score=0,bx=.5,biteAt=3,prevHit=false,msg='Hentak HP ke depan untuk melempar';
- function say(m){msg=m;if(conn&&conn.open)conn.send({t:'msg',m})}
- function go(s,m){S=s;t=0;cool=.7;say(m)}
+  $('go').onclick = async () => {
+    // 1. Minta Izin Sensor Motion (Wajib untuk iOS / Android modern)
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const perm = await DeviceMotionEvent.requestPermission();
+        if (perm !== 'granted') return log('Izin sensor gerak ditolak.');
+      }
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch(e) {
+      return log('Gagal mendapatkan izin sensor: ' + e.message);
+    }
 
- function step(dt){
-  const hit=inp.a>7||key.sp,edge=hit&&!prevHit&&cool<=0;prevHit=hit;
-  const rot=Math.max(inp.r||0,key.r?400:0);
-  cool-=dt;
-  if(S==='idle'){
-   if(edge){bx=Math.min(.9,Math.max(.1,.5+(inp.g||0)/90+kx));biteAt=2+Math.random()*4;go('wait','Menunggu ikan...')}
-  }else if(S==='wait'){
-   t+=dt;
-   if(t>biteAt){go('bite','Ikan makan! Hentak sekarang!');beep(880,.25);if(conn&&conn.open)conn.send({t:'bite'})}
-  }else if(S==='bite'){
-   t+=dt;
-   if(edge){fish=1;tens=0;go('reel','Putar HP seperti menggulung')}
-   else if(t>1.5)go('idle','Ikan lolos. Hentak untuk melempar lagi')
-  }else if(S==='reel'){
-   t+=dt;
-   const fight=Math.sin(t*1.7)>.55;
-   fish-=rot/3000*dt;fish+=(fight?.05:.015)*dt;
-   tens+=(fight&&rot>250?.8:-.4)*dt;tens=Math.min(1,Math.max(0,tens));
-   fish=Math.min(1,fish);
-   if(tens>=1){go('idle','Tali putus. Pelan saat ikan melawan')}
-   else if(fish<=0){score++;beep(1200,.3);go('idle','Dapat ikan! Hentak untuk melempar lagi')}
+    beep(1000, 0.05);
+    log('Menghubungkan ke Laptop...');
+    $('go').disabled = true;
+
+    // 2. Inisialisasi PeerJS Connection
+    const p = new Peer();
+    p.on('error', e => {
+      log('Error Koneksi: ' + e.type);
+      $('go').disabled = false;
+    });
+
+    p.on('open', () => {
+      conn = p.connect(cid, { reliable: true });
+      
+      conn.on('open', () => {
+        $('go').classList.add('hide');
+        $('ctl-desc').classList.add('hide');
+        $('motion-debug').classList.remove('hide');
+        log('Terhubung! Pegang HP seperti joran.');
+        runMotionEngine();
+      });
+
+      conn.on('close', () => log('Koneksi terputus dari Laptop.'));
+      conn.on('data', d => {
+        if (d.t === 'bite') {
+          if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+          beep(880, 0.25);
+        }
+        if (d.t === 'msg') log(d.m);
+      });
+    });
+  };
+
+  function runMotionEngine() {
+    window.addEventListener('deviceorientation', e => {
+      s.g = e.gamma || 0;
+      s.b = e.beta || 0;
+    }, true);
+
+    let sensorDetected = false;
+
+    window.addEventListener('devicemotion', e => {
+      sensorDetected = true;
+      const now = performance.now();
+      if (now - last < 33) return; // Limit ~30fps kirim data
+      last = now;
+
+      // Kalkulasi Akselerasi Murni & Gravitasi
+      const a = e.acceleration;
+      const ag = e.accelerationIncludingGravity;
+      let acc = 0;
+
+      if (a && (a.x !== null && a.x !== undefined)) {
+        acc = Math.hypot(a.x, a.y, a.z);
+      } else if (ag && ag.x !== null) {
+        acc = Math.abs(Math.hypot(ag.x, ag.y, ag.z) - 9.8);
+      }
+
+      // Kalkulasi Rotasi HP (Gulung Tali)
+      const r = e.rotationRate || {};
+      const rot = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
+
+      // Update Meteran Visual di Layar HP
+      $('val-acc').textContent = acc.toFixed(1);
+      $('val-rot').textContent = rot.toFixed(0);
+      $('val-g').textContent = s.g.toFixed(0) + '°';
+      
+      $('bar-acc').style.width = Math.min(100, (acc / 15) * 100) + '%';
+      if (acc > 7) $('bar-acc').classList.add('hit'); else $('bar-acc').classList.remove('hit');
+      
+      $('bar-rot').style.width = Math.min(100, (rot / 600) * 100) + '%';
+
+      // Kirim Data ke Laptop
+      if (conn && conn.open) {
+        conn.send({ a: acc, r: rot, g: s.g });
+      }
+    }, true);
+
+    setTimeout(() => {
+      if (!sensorDetected) {
+        log('Sensormu tidak mengirim data. Pastikan membuka via HTTPS (GitHub Pages) dan izin browser aktif.');
+      }
+    }, 2000);
   }
- }
+}
 
- function draw(){
-  x.fillStyle='#9fd0d8';x.fillRect(0,0,800,150);
-  x.fillStyle='#14505f';x.fillRect(0,150,800,300);
-  x.fillStyle='#1b6a7c';for(let i=0;i<6;i++)x.fillRect(40+i*140,200+(i%3)*60,70,3);
-  const k=S==='reel'?1-fish:S==='idle'?1:0;
-  let px=S==='idle'?400:bx*800+(400-bx*800)*k, py=S==='idle'?420:260+k*130;
-  if(S==='wait'||S==='bite')py+=Math.sin(performance.now()/300)*(S==='bite'?10:3);
-  x.strokeStyle='#eaf3ee';x.lineWidth=2;x.beginPath();x.moveTo(400,440);x.lineTo(px,py);x.stroke();
-  x.fillStyle=S==='bite'?'#e63946':'#f2a541';x.beginPath();x.arc(px,py,9,0,7);x.fill();
-  if(S==='bite'){x.strokeStyle='#fff';x.beginPath();x.arc(px,py,20+(t*60)%30,0,7);x.stroke()}
-  x.fillStyle='#eaf3ee';x.font='22px Georgia';x.textAlign='center';x.fillText(msg,400,40);
-  x.textAlign='left';x.font='18px Georgia';x.fillText('Ikan: '+score,16,440);
-  x.font='13px monospace';x.fillStyle='#eaf3ee99';
-  x.fillText('terima: a '+(inp.a||0).toFixed(1)+'  r '+(inp.r||0).toFixed(0)+'  g '+(inp.g||0).toFixed(0)+'  (hentak jika a > 7)',16,20);
-  if(S==='reel'){
-   x.fillStyle='#0003';x.fillRect(600,420,180,16);
-   x.fillStyle=tens>.7?'#e63946':'#f2a541';x.fillRect(600,420,180*tens,16);
-   x.fillStyle='#eaf3ee';x.fillText('Tegangan tali',600,412);
-   if(Math.sin(t*1.7)>.55){x.fillStyle='#e63946';x.textAlign='center';x.fillText('Ikan melawan, gulung pelan',400,70)}
+// ==========================================
+// KODE HOST (LAPTOP)
+// ==========================================
+function host() {
+  $('host').classList.remove('hide');
+  const id = 'pancing-' + Math.random().toString(36).slice(2, 7);
+  const url = location.href.split('?')[0] + '?c=' + id;
+  let conn = null, inp = { a: 0, r: 0, g: 0 };
+
+  try {
+    const p = new Peer(id);
+    p.on('open', () => {
+      new QRCode($('qr'), { text: url, width: 180, height: 180 });
+      $('url').textContent = url;
+    });
+    p.on('error', e => log('Peer Error: ' + e.type + '. Mode Keyboard aktif.'));
+    p.on('connection', c => {
+      conn = c;
+      c.on('data', d => inp = d);
+      $('panel').classList.add('hide');
+      log('HP Terhubung!');
+      say(msg);
+    });
+  } catch(e) {
+    log('Gagal memuat WebRTC. Gunakan keyboard.');
   }
- }
- let lt=performance.now();
- (function loop(n){const dt=Math.min(.05,(n-lt)/1000);lt=n;step(dt);draw();requestAnimationFrame(loop)})(lt);
+
+  // Keyboard Fallback
+  const key = { sp: false, r: false }; let kx = 0;
+  addEventListener('keydown', e => {
+    if (e.key === ' ') { key.sp = true; e.preventDefault(); }
+    if (e.key === 'r') key.r = true;
+    if (e.key === 'ArrowLeft') kx = Math.max(-.4, kx - .05);
+    if (e.key === 'ArrowRight') kx = Math.min(.4, kx + .05);
+    $('panel').classList.add('hide');
+  });
+  addEventListener('keyup', e => {
+    if (e.key === ' ') key.sp = false;
+    if (e.key === 'r') key.r = false;
+  });
+
+  // Game Logic Engine
+  const cv = $('cv'), x = cv.getContext('2d');
+  let S = 'idle', t = 0, cool = 0, fish = 1, tens = 0, score = 0, bx = .5, biteAt = 3, prevHit = false;
+  let msg = 'Hentak HP ke depan untuk melempar';
+
+  function say(m) {
+    msg = m;
+    if (conn && conn.open) conn.send({ t: 'msg', m });
+  }
+
+  function go(s, m) {
+    S = s; t = 0; cool = .7;
+    say(m);
+  }
+
+  function step(dt) {
+    const hit = inp.a > 7 || key.sp;
+    const edge = hit && !prevHit && cool <= 0;
+    prevHit = hit;
+
+    const rot = Math.max(inp.r || 0, key.r ? 400 : 0);
+    cool -= dt;
+
+    if (S === 'idle') {
+      if (edge) {
+        bx = Math.min(.9, Math.max(.1, .5 + (inp.g || 0) / 90 + kx));
+        biteAt = 2 + Math.random() * 4;
+        go('wait', 'Menunggu ikan...');
+      }
+    } else if (S === 'wait') {
+      t += dt;
+      if (t > biteAt) {
+        go('bite', 'Ikan makan! Hentak sekarang!');
+        beep(880, .25);
+        if (conn && conn.open) conn.send({ t: 'bite' });
+      }
+    } else if (S === 'bite') {
+      t += dt;
+      if (edge) {
+        fish = 1; tens = 0;
+        go('reel', 'Putar HP seperti menggulung');
+      } else if (t > 1.5) {
+        go('idle', 'Ikan lolos. Hentak untuk melempar lagi');
+      }
+    } else if (S === 'reel') {
+      t += dt;
+      const fight = Math.sin(t * 1.7) > .55;
+      fish -= (rot / 3000) * dt;
+      fish += (fight ? .05 : .015) * dt;
+      tens += (fight && rot > 250 ? .8 : -.4) * dt;
+      tens = Math.min(1, Math.max(0, tens));
+      fish = Math.min(1, fish);
+
+      if (tens >= 1) {
+        go('idle', 'Tali putus. Pelan saat ikan melawan!');
+      } else if (fish <= 0) {
+        score++;
+        beep(1200, .3);
+        go('idle', 'Dapat ikan! Hentak untuk melempar lagi');
+      }
+    }
+  }
+
+  function draw() {
+    x.fillStyle = '#9fd0d8'; x.fillRect(0, 0, 800, 150);
+    x.fillStyle = '#14505f'; x.fillRect(0, 150, 800, 300);
+    x.fillStyle = '#1b6a7c';
+    for (let i = 0; i < 6; i++) x.fillRect(40 + i * 140, 200 + (i % 3) * 60, 70, 3);
+
+    const k = S === 'reel' ? 1 - fish : S === 'idle' ? 1 : 0;
+    let px = S === 'idle' ? 400 : bx * 800 + (400 - bx * 800) * k;
+    let py = S === 'idle' ? 420 : 260 + k * 130;
+
+    if (S === 'wait' || S === 'bite') py += Math.sin(performance.now() / 300) * (S === 'bite' ? 10 : 3);
+
+    x.strokeStyle = '#eaf3ee'; x.lineWidth = 2;
+    x.beginPath(); x.moveTo(400, 440); x.lineTo(px, py); x.stroke();
+
+    x.fillStyle = S === 'bite' ? '#e63946' : '#f2a541';
+    x.beginPath(); x.arc(px, py, 9, 0, 7); x.fill();
+
+    if (S === 'bite') {
+      x.strokeStyle = '#fff'; x.beginPath();
+      x.arc(px, py, 20 + (t * 60) % 30, 0, 7); x.stroke();
+    }
+
+    x.fillStyle = '#eaf3ee'; x.font = '22px Georgia'; x.textAlign = 'center';
+    x.fillText(msg, 400, 40);
+
+    x.textAlign = 'left'; x.font = '18px Georgia';
+    x.fillText('Ikan: ' + score, 16, 440);
+
+    x.font = '13px monospace'; x.fillStyle = '#eaf3ee99';
+    x.fillText('Acc: ' + (inp.a || 0).toFixed(1) + ' | Rot: ' + (inp.r || 0).toFixed(0) + ' | Tilt: ' + (inp.g || 0).toFixed(0) + '°', 16, 20);
+
+    if (S === 'reel') {
+      x.fillStyle = '#0003'; x.fillRect(600, 420, 180, 16);
+      x.fillStyle = tens > .7 ? '#e63946' : '#f2a541'; x.fillRect(600, 420, 180 * tens, 16);
+      x.fillStyle = '#eaf3ee'; x.fillText('Tegangan Tali', 600, 412);
+      if (Math.sin(t * 1.7) > .55) {
+        x.fillStyle = '#e63946'; x.textAlign = 'center';
+        x.fillText('Ikan melawan, gulung pelan!', 400, 70);
+      }
+    }
+  }
+
+  let lt = performance.now();
+  (function loop(n) {
+    const dt = Math.min(.05, (n - lt) / 1000);
+    lt = n;
+    step(dt);
+    draw();
+    requestAnimationFrame(loop);
+  })(lt);
 }
 </script>
-</body></html>
+</body>
+</html>

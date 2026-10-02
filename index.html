@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pancing HP - Fix Sensor</title>
+<title>Pancing HP - Fix PeerJS</title>
 <style>
 :root { --bg: #0e2a33; --fg: #eaf3ee; --ac: #f2a541; --w: #14505f; --danger: #e63946; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); font: 16px Georgia, serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 12px; box-sizing: border-box; }
 h2 { margin: 0; font-size: 26px; }
-button { font: inherit; font-weight: 700; padding: 16px 28px; border: 0; border-radius: 10px; background: var(--ac); color: #1a1205; cursor: pointer; margin-top: 10px; }
+button { font: inherit; font-weight: 700; padding: 14px 24px; border: 0; border-radius: 10px; background: var(--ac); color: #1a1205; cursor: pointer; margin-top: 10px; }
 canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10px; }
-#qr { background: #fff; padding: 10px; display: inline-block; border-radius: 6px; }
+#qr { background: #fff; padding: 10px; display: inline-block; border-radius: 6px; min-width: 180px; min-height: 180px; }
 #url { font-size: 11px; word-break: break-all; max-width: 340px; opacity: .7; }
 .hide { display: none !important; }
 
@@ -29,10 +29,11 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
 <div id="host" class="hide">
   <div id="panel">
     <h2>Pancing HP</h2>
-    <p>Scan QR Code dengan HP untuk dijadikan joran:</p>
+    <p id="qr-status">Menghubungkan ke Server PeerJS...</p>
     <div id="qr"></div>
     <p id="url"></p>
-    <p style="font-size: 13px; opacity: 0.8;">Tes Keyboard: [Spasi] = Hentak | Tahan [R] = Gulung | [Panah] = Arah</p>
+    <button id="btn-retry-host" class="hide" onclick="location.reload()">Coba Lagi (Refresh ID)</button>
+    <p style="font-size: 13px; opacity: 0.8; margin-top: 15px;">Tes Keyboard: [Spasi] = Hentak | Tahan [R] = Gulung | [Panah] = Arah</p>
   </div>
   <canvas id="cv" width="800" height="450"></canvas>
 </div>
@@ -41,7 +42,7 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
 <div id="ctl" class="hide">
   <h2>Joran HP</h2>
   <p id="ctl-desc">Klik tombol di bawah untuk meminta akses sensor & terhubung.</p>
-  <button id="go">Mulai & Akurasi Sensor</button>
+  <button id="go">Mulai & Izinkan Sensor</button>
   
   <div id="err-box" class="alert hide"></div>
 
@@ -59,7 +60,6 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
 </div>
 
 <p id="st" style="font-weight: bold; margin-top: 10px;"></p>
-<p id="dbg" style="opacity:.6; font-size:13px"></p>
 
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -92,19 +92,17 @@ function controller() {
   $('ctl').classList.remove('hide');
   let conn, last = 0, s = { g: 0, b: 0 }, pkts = 0;
 
-  // Cek apakah lokasi HTTPS
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-    showErr('PERINGATAN: Situs tidak dibuka via HTTPS. Sensor gerak dimatikan oleh browser!');
+    showErr('PERINGATAN: Harus dibuka via HTTPS agar sensor berfungsi!');
   }
 
   $('go').onclick = async () => {
     $('err-box').classList.add('hide');
     
-    // Request Izin Sensor
     try {
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const perm = await DeviceMotionEvent.requestPermission();
-        if (perm !== 'granted') return showErr('Izin sensor gerak ditolak oleh pengguna.');
+        if (perm !== 'granted') return showErr('Izin sensor gerak ditolak.');
       }
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         await DeviceOrientationEvent.requestPermission();
@@ -117,15 +115,20 @@ function controller() {
     log('Menghubungkan ke Laptop...');
     $('go').disabled = true;
 
-    // Inisialisasi PeerJS
     const p = new Peer();
+    
     p.on('error', e => {
-      log('Error PeerJS: ' + e.type);
-      showErr('Koneksi PeerJS gagal: ' + e.type);
+      log('Error: ' + e.type);
+      if (e.type === 'peer-unavailable') {
+        showErr('Laptop tidak ditemukan/belum siap. Refresh halaman di Laptop, lalu scan ulang QR Code baru.');
+      } else {
+        showErr('Gagal terhubung: ' + e.type);
+      }
       $('go').disabled = false;
     });
 
     p.on('open', () => {
+      // Hubungkan ke ID Host
       conn = p.connect(cid, { reliable: true });
       
       conn.on('open', () => {
@@ -136,7 +139,13 @@ function controller() {
         runMotionEngine();
       });
 
-      conn.on('close', () => log('Koneksi terputus dari Laptop.'));
+      conn.on('close', () => {
+        log('Koneksi terputus.');
+        showErr('Terputus dari Laptop.');
+        $('go').disabled = false;
+        $('go').classList.remove('hide');
+      });
+
       conn.on('data', d => {
         if (d.t === 'bite') {
           if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
@@ -155,14 +164,12 @@ function controller() {
 
     let sensorReadCount = 0;
 
-    // Fallback event 'devicemotion'
     const handleMotion = e => {
       sensorReadCount++;
       const now = performance.now();
-      if (now - last < 33) return; // Limit ~30fps
+      if (now - last < 33) return;
       last = now;
 
-      // Hitung Akselerasi
       const a = e.acceleration;
       const ag = e.accelerationIncludingGravity;
       let acc = 0;
@@ -170,15 +177,12 @@ function controller() {
       if (a && (a.x !== null && a.x !== undefined)) {
         acc = Math.hypot(a.x, a.y, a.z);
       } else if (ag && ag.x !== null && ag.x !== undefined) {
-        // Kurangi estimasi gaya gravitasi (9.8)
         acc = Math.abs(Math.hypot(ag.x, ag.y, ag.z) - 9.8);
       }
 
-      // Hitung Rotasi (Gulung)
       const r = e.rotationRate || {};
       const rot = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
 
-      // Update Angka di HP
       $('val-acc').textContent = acc.toFixed(1);
       $('val-rot').textContent = rot.toFixed(0);
       $('val-g').textContent = s.g.toFixed(0) + '°';
@@ -188,7 +192,6 @@ function controller() {
       
       $('bar-rot').style.width = Math.min(100, (rot / 600) * 100) + '%';
 
-      // Kirim Data
       if (conn && conn.open) {
         pkts++;
         $('val-pkts').textContent = pkts;
@@ -200,7 +203,7 @@ function controller() {
 
     setTimeout(() => {
       if (sensorReadCount === 0) {
-        showErr('Sensor tidak merespons! Buka chrome://flags cari Generic Sensor dan aktifkan, atau aktifkan Motion Sensor di setelan situs browser HP.');
+        showErr('Sensor tidak merespons. Pastikan izin Motion sensors aktif di browser HP.');
       }
     }, 2000);
   }
@@ -211,27 +214,35 @@ function controller() {
 // ==========================================
 function host() {
   $('host').classList.remove('hide');
-  const id = 'pancing-' + Math.random().toString(36).slice(2, 7);
+  
+  // Buat Random ID unik
+  const id = 'pancing-' + Math.floor(1000 + Math.random() * 9000);
   const url = location.href.split('?')[0] + '?c=' + id;
   let conn = null, inp = { a: 0, r: 0, g: 0 };
 
-  try {
-    const p = new Peer(id);
-    p.on('open', () => {
-      new QRCode($('qr'), { text: url, width: 180, height: 180 });
-      $('url').textContent = url;
-    });
-    p.on('error', e => log('Peer Error: ' + e.type + '. Mode Keyboard aktif.'));
-    p.on('connection', c => {
-      conn = c;
-      c.on('data', d => inp = d);
-      $('panel').classList.add('hide');
-      log('HP Terhubung!');
-      say(msg);
-    });
-  } catch(e) {
-    log('Gagal memuat WebRTC.');
-  }
+  const p = new Peer(id);
+
+  // BARU: QR Code BARU DIGAMBAR SETELAH Peer Server mengonfirmasi ID siap!
+  p.on('open', readyId => {
+    $('qr-status').textContent = 'Scan QR dengan HP untuk jadi joran:';
+    $('qr').innerHTML = ''; // bersihkan canvas QR lama
+    new QRCode($('qr'), { text: url, width: 180, height: 180 });
+    $('url').textContent = url;
+  });
+
+  p.on('error', e => {
+    log('Server Peer Error: ' + e.type);
+    $('qr-status').textContent = 'Gagal terhubung ke server koneksi. Silakan refresh.';
+    $('btn-retry-host').classList.remove('hide');
+  });
+
+  p.on('connection', c => {
+    conn = c;
+    c.on('data', d => inp = d);
+    $('panel').classList.add('hide');
+    log('HP Terhubung!');
+    say(msg);
+  });
 
   // Keyboard Fallback
   const key = { sp: false, r: false }; let kx = 0;
@@ -247,7 +258,7 @@ function host() {
     if (e.key === 'r') key.r = false;
   });
 
-  // Engine
+  // Game Engine
   const cv = $('cv'), x = cv.getContext('2d');
   let S = 'idle', t = 0, cool = 0, fish = 1, tens = 0, score = 0, bx = .5, biteAt = 3, prevHit = false;
   let msg = 'Hentak HP ke depan untuk melempar';

@@ -3,23 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pancing HP - Motion Detector</title>
+<title>Pancing HP - Fix Sensor</title>
 <style>
 :root { --bg: #0e2a33; --fg: #eaf3ee; --ac: #f2a541; --w: #14505f; --danger: #e63946; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); font: 16px Georgia, serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 12px; box-sizing: border-box; }
 h2 { margin: 0; font-size: 26px; }
-button { font: inherit; font-weight: 700; padding: 16px 28px; border: 0; border-radius: 10px; background: var(--ac); color: #1a1205; cursor: pointer; }
+button { font: inherit; font-weight: 700; padding: 16px 28px; border: 0; border-radius: 10px; background: var(--ac); color: #1a1205; cursor: pointer; margin-top: 10px; }
 canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10px; }
 #qr { background: #fff; padding: 10px; display: inline-block; border-radius: 6px; }
 #url { font-size: 11px; word-break: break-all; max-width: 340px; opacity: .7; }
 .hide { display: none !important; }
 
 /* Dashboard Pengukur Motion di HP */
-.meter-box { width: 100%; max-width: 320px; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; box-sizing: border-box; text-align: left; font-size: 13px; font-family: monospace; }
+.meter-box { width: 100%; max-width: 320px; background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; box-sizing: border-box; text-align: left; font-size: 13px; font-family: monospace; }
 .bar-bg { background: rgba(255,255,255,0.2); height: 14px; border-radius: 7px; overflow: hidden; margin-top: 4px; }
 .bar-fill { background: var(--ac); height: 100%; width: 0%; transition: width 0.05s linear; }
 .bar-fill.hit { background: var(--danger); }
+.alert { background: var(--danger); color: white; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -31,7 +32,7 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
     <p>Scan QR Code dengan HP untuk dijadikan joran:</p>
     <div id="qr"></div>
     <p id="url"></p>
-    <p style="font-size: 13px; opacity: 0.8;">Atau tes tanpa HP: [Spasi] = Hentak | Tahan [R] = Gulung | [Panah] = Arah</p>
+    <p style="font-size: 13px; opacity: 0.8;">Tes Keyboard: [Spasi] = Hentak | Tahan [R] = Gulung | [Panah] = Arah</p>
   </div>
   <canvas id="cv" width="800" height="450"></canvas>
 </div>
@@ -39,9 +40,11 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
 <!-- TAMPILAN HP / CONTROLLER -->
 <div id="ctl" class="hide">
   <h2>Joran HP</h2>
-  <p id="ctl-desc">Klik tombol di bawah untuk mengaktifkan sensor dan terhubung.</p>
-  <button id="go">Mulai & Izinkan Sensor</button>
+  <p id="ctl-desc">Klik tombol di bawah untuk meminta akses sensor & terhubung.</p>
+  <button id="go">Mulai & Akurasi Sensor</button>
   
+  <div id="err-box" class="alert hide"></div>
+
   <!-- VISUALIZER MOTION (PENGUKUR GERAKAN) -->
   <div id="motion-debug" class="meter-box hide" style="margin-top: 15px;">
     <div>Hentakan (Acc): <span id="val-acc">0.0</span></div>
@@ -51,6 +54,7 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
     <div class="bar-bg"><div id="bar-rot" class="bar-fill"></div></div>
 
     <div style="margin-top: 8px;">Miring (Gamma): <span id="val-g">0°</span></div>
+    <div style="margin-top: 8px;">Paket Terkirim: <span id="val-pkts">0</span></div>
   </div>
 </div>
 
@@ -62,6 +66,7 @@ canvas { width: 100%; max-width: 880px; background: var(--w); border-radius: 10p
 <script>
 const $ = id => document.getElementById(id);
 const log = m => $('st').textContent = m;
+const showErr = m => { $('err-box').classList.remove('hide'); $('err-box').textContent = m; };
 const cid = new URLSearchParams(location.search).get('c');
 
 function beep(f, d) {
@@ -85,30 +90,38 @@ if (cid) {
 // ==========================================
 function controller() {
   $('ctl').classList.remove('hide');
-  let conn, last = 0, s = { g: 0, b: 0 };
+  let conn, last = 0, s = { g: 0, b: 0 }, pkts = 0;
+
+  // Cek apakah lokasi HTTPS
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    showErr('PERINGATAN: Situs tidak dibuka via HTTPS. Sensor gerak dimatikan oleh browser!');
+  }
 
   $('go').onclick = async () => {
-    // 1. Minta Izin Sensor Motion (Wajib untuk iOS / Android modern)
+    $('err-box').classList.add('hide');
+    
+    // Request Izin Sensor
     try {
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const perm = await DeviceMotionEvent.requestPermission();
-        if (perm !== 'granted') return log('Izin sensor gerak ditolak.');
+        if (perm !== 'granted') return showErr('Izin sensor gerak ditolak oleh pengguna.');
       }
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         await DeviceOrientationEvent.requestPermission();
       }
     } catch(e) {
-      return log('Gagal mendapatkan izin sensor: ' + e.message);
+      showErr('Gagal akses sensor: ' + e.message);
     }
 
     beep(1000, 0.05);
     log('Menghubungkan ke Laptop...');
     $('go').disabled = true;
 
-    // 2. Inisialisasi PeerJS Connection
+    // Inisialisasi PeerJS
     const p = new Peer();
     p.on('error', e => {
-      log('Error Koneksi: ' + e.type);
+      log('Error PeerJS: ' + e.type);
+      showErr('Koneksi PeerJS gagal: ' + e.type);
       $('go').disabled = false;
     });
 
@@ -119,7 +132,7 @@ function controller() {
         $('go').classList.add('hide');
         $('ctl-desc').classList.add('hide');
         $('motion-debug').classList.remove('hide');
-        log('Terhubung! Pegang HP seperti joran.');
+        log('Terhubung! Goyangkan HP-mu.');
         runMotionEngine();
       });
 
@@ -140,30 +153,32 @@ function controller() {
       s.b = e.beta || 0;
     }, true);
 
-    let sensorDetected = false;
+    let sensorReadCount = 0;
 
-    window.addEventListener('devicemotion', e => {
-      sensorDetected = true;
+    // Fallback event 'devicemotion'
+    const handleMotion = e => {
+      sensorReadCount++;
       const now = performance.now();
-      if (now - last < 33) return; // Limit ~30fps kirim data
+      if (now - last < 33) return; // Limit ~30fps
       last = now;
 
-      // Kalkulasi Akselerasi Murni & Gravitasi
+      // Hitung Akselerasi
       const a = e.acceleration;
       const ag = e.accelerationIncludingGravity;
       let acc = 0;
 
       if (a && (a.x !== null && a.x !== undefined)) {
         acc = Math.hypot(a.x, a.y, a.z);
-      } else if (ag && ag.x !== null) {
+      } else if (ag && ag.x !== null && ag.x !== undefined) {
+        // Kurangi estimasi gaya gravitasi (9.8)
         acc = Math.abs(Math.hypot(ag.x, ag.y, ag.z) - 9.8);
       }
 
-      // Kalkulasi Rotasi HP (Gulung Tali)
+      // Hitung Rotasi (Gulung)
       const r = e.rotationRate || {};
       const rot = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
 
-      // Update Meteran Visual di Layar HP
+      // Update Angka di HP
       $('val-acc').textContent = acc.toFixed(1);
       $('val-rot').textContent = rot.toFixed(0);
       $('val-g').textContent = s.g.toFixed(0) + '°';
@@ -173,15 +188,19 @@ function controller() {
       
       $('bar-rot').style.width = Math.min(100, (rot / 600) * 100) + '%';
 
-      // Kirim Data ke Laptop
+      // Kirim Data
       if (conn && conn.open) {
+        pkts++;
+        $('val-pkts').textContent = pkts;
         conn.send({ a: acc, r: rot, g: s.g });
       }
-    }, true);
+    };
+
+    window.addEventListener('devicemotion', handleMotion, true);
 
     setTimeout(() => {
-      if (!sensorDetected) {
-        log('Sensormu tidak mengirim data. Pastikan membuka via HTTPS (GitHub Pages) dan izin browser aktif.');
+      if (sensorReadCount === 0) {
+        showErr('Sensor tidak merespons! Buka chrome://flags cari Generic Sensor dan aktifkan, atau aktifkan Motion Sensor di setelan situs browser HP.');
       }
     }, 2000);
   }
@@ -211,7 +230,7 @@ function host() {
       say(msg);
     });
   } catch(e) {
-    log('Gagal memuat WebRTC. Gunakan keyboard.');
+    log('Gagal memuat WebRTC.');
   }
 
   // Keyboard Fallback
@@ -228,7 +247,7 @@ function host() {
     if (e.key === 'r') key.r = false;
   });
 
-  // Game Logic Engine
+  // Engine
   const cv = $('cv'), x = cv.getContext('2d');
   let S = 'idle', t = 0, cool = 0, fish = 1, tens = 0, score = 0, bx = .5, biteAt = 3, prevHit = false;
   let msg = 'Hentak HP ke depan untuk melempar';

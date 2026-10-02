@@ -8,13 +8,13 @@
   body { font-family: sans-serif; text-align: center; padding: 20px; background: #111; color: #fff; }
   #qr { background: #fff; padding: 10px; display: inline-block; margin: 15px auto; border-radius: 8px; }
   .box { background: #222; border: 2px solid #444; padding: 15px; margin: 10px auto; max-width: 400px; border-radius: 8px; }
-  button { padding: 15px 25px; font-size: 18px; font-weight: bold; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; }
+  button { padding: 15px 25px; font-size: 18px; font-weight: bold; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 10px; }
   .active { background: #e63946 !important; }
 </style>
 </head>
 <body>
 
-<h2>TES SINKRONISASI HP <-> LAPTOP</h2>
+<h2>TES SINKRONISASI HP &lt;-&gt; LAPTOP</h2>
 
 <!-- Halaman Laptop -->
 <div id="view-host" class="box" style="display:none;">
@@ -29,11 +29,12 @@
 <!-- Halaman HP -->
 <div id="view-ctl" class="box" style="display:none;">
   <h3>Layar HP (Controller)</h3>
-  <p id="ctl-status">Klik tombol di bawah untuk terhubung:</p>
-  <button id="btn-connect">HUBUNGKAN KE LAPTOP</button>
+  <p id="ctl-status">Klik tombol untuk mengaktifkan sensor & terhubung:</p>
+  <button id="btn-connect">HUBUNGKAN & AKTIFKAN SENSOR</button>
+  <button id="btn-fallback" style="display:none; background:#007bff;">KIRIM TES MANUAL</button>
   <hr>
   <h4>Status Sensor HP:</h4>
-  <p id="ctl-motion">Goyangkan HP setelah terhubung!</p>
+  <p id="ctl-motion">Menunggu koneksi...</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
@@ -42,7 +43,6 @@
 const $ = id => document.getElementById(id);
 const roomId = new URLSearchParams(location.search).get('room');
 
-// Jika tidak ada parameter ?room= di URL, berarti ini LAPTOP
 if (!roomId) {
   initLaptop();
 } else {
@@ -50,12 +50,11 @@ if (!roomId) {
 }
 
 // -------------------------------------------------------------
-// 1. LOGIKA LAPTOP
+// LAPTOP ENGINE
 // -------------------------------------------------------------
 function initLaptop() {
   $('view-host').style.display = 'block';$('host-status').textContent = 'Meminta ID dari server PeerJS...';
 
-  // Pakai server PeerJS resmi versi stabil
   const peer = new Peer();
 
   peer.on('open', id => {
@@ -70,9 +69,12 @@ function initLaptop() {
     $('host-status').textContent = 'TERHUBUNG DENGAN HP!';
     
     conn.on('data', data => {
-      // Tampilkan data langsung di layar Laptop
       $('host-data').textContent = `Acc: ${data.acc} | Status: ${data.msg}`;
       document.body.style.backgroundColor = data.hit ? '#800' : '#111';
+    });
+
+    conn.on('close', () => {
+      $('host-status').textContent = 'HP Terputus!';
     });
   });
 
@@ -82,54 +84,81 @@ function initLaptop() {
 }
 
 // -------------------------------------------------------------
-// 2. LOGIKA HP
+// HP ENGINE
 // -------------------------------------------------------------
 function initHP() {
   $('view-ctl').style.display = 'block';
   let conn = null;
+  let currentAcc = 0;
 
-  $('btn-connect').onclick = async () => {$('ctl-status').textContent = 'Meminta izin sensor & menghubungkan...';
+  $('btn-connect').onclick = async () => {$('ctl-status').textContent = 'Meminta izin sensor...';
 
-    // Minta izin sensor iOS/Android
-    try {
-      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        await DeviceMotionEvent.requestPermission();
+    // 1. Minta izin eksplisit untuk iOS / Chrome Modern
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const state = await DeviceMotionEvent.requestPermission();
+        if (state !== 'granted') {
+          $('ctl-status').textContent = 'Izin sensor ditolak!';
+          return;
+        }
+      } catch (e) {
+        console.error(e);
       }
-    } catch(e) {}
+    }
+
+    $('ctl-status').textContent = 'Menghubungkan ke Laptop...';
 
     const peer = new Peer();
 
     peer.on('open', () => {
-      // Hubungkan ke ID Laptop yang ada di URL
-      conn = peer.connect(roomId);
+      conn = peer.connect(roomId, { reliable: true });
 
       conn.on('open', () => {
-        $('ctl-status').textContent = 'SINKRON BERHASIL! Goyangkan HP-mu!';
-        $('btn-connect').style.display = 'none';
-        
-        // Mulai kirim data sensor saat HP digoyangkan
+        $('ctl-status').textContent = 'TERHUBUNG! Goyangkan HP-mu!';
+        $('btn-connect').style.display = 'none';$('btn-fallback').style.display = 'block';
+
+        // Sensor Stream
         window.addEventListener('devicemotion', e => {
-          const a = e.accelerationIncludingGravity || e.acceleration;
-          if (!a) return;
+          let acc = 0;
+          if (e.acceleration && e.acceleration.x !== null) {
+            acc = Math.hypot(e.acceleration.x, e.acceleration.y, e.acceleration.z);
+          } else if (e.accelerationIncludingGravity && e.accelerationIncludingGravity.x !== null) {
+            acc = Math.abs(Math.hypot(e.accelerationIncludingGravity.x, e.accelerationIncludingGravity.y, e.accelerationIncludingGravity.z) - 9.8);
+          }
+          currentAcc = acc.toFixed(1);
+          $('ctl-motion').textContent = `Angka Gerak: ${currentAcc}`;
+        }, true);
 
-          const acc = Math.hypot(a.x || 0, a.y || 0, a.z || 0).toFixed(1);
-          const isHit = acc > 15; // Hentakan kuat
-
-          $('ctl-motion').textContent = `Angka Gerak: ${acc}`;
-
-          // Kirim langsung ke Laptop
-          conn.send({
-            acc: acc,
-            hit: isHit,
-            msg: isHit ? 'HENTAKAN DITANGKAP!' : 'Gerak Biasa'
-          });
-        });
+        // Continuous Loop: Mengirim data secara rutin (Heartbeat) tiap 50ms
+        setInterval(() => {
+          if (conn && conn.open) {
+            const isHit = currentAcc > 12;
+            conn.send({
+              acc: currentAcc,
+              hit: isHit,
+              msg: isHit ? 'HENTAKAN KENCANG!' : 'Berhasil Terhubung & Bergerak'
+            });
+          }
+        }, 50);
       });
 
       conn.on('error', err => {
         $('ctl-status').textContent = 'Gagal Konek: ' + err.type;
       });
     });
+  };
+
+  // Tombol tes cadangan jika sensor fisik di HP-mu memang terkunci browser
+  $('btn-fallback').onclick = () => {
+    if (conn && conn.open) {
+      currentAcc = (Math.random() * 20).toFixed(1);
+      const isHit = currentAcc > 12;
+      conn.send({
+        acc: currentAcc,
+        hit: isHit,
+        msg: 'Tes Sentuh Manual'
+      });
+    }
   };
 }
 </script>

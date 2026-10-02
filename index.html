@@ -28,6 +28,7 @@ canvas{width:100%;max-width:880px;background:var(--w);border-radius:10px}
  <button id="go">Mulai dan izinkan sensor</button>
 </div>
 <p id="st"></p>
+<p id="dbg" style="opacity:.6;font-size:13px"></p>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
@@ -45,7 +46,7 @@ function controller(){
   const p=new Peer();
   p.on('error',e=>log('Error: '+e.type));
   p.on('open',()=>{
-   conn=p.connect(cid,{reliable:false});
+   conn=p.connect(cid,{serialization:'json'});
    conn.on('open',()=>{$('go').classList.add('hide');log('Terhubung. Pegang HP seperti joran.');run()});
    conn.on('close',()=>log('Terputus'));
    conn.on('data',d=>{
@@ -56,11 +57,16 @@ function controller(){
  };
  function run(){
   addEventListener('deviceorientation',e=>{s.g=e.gamma||0;s.b=e.beta||0});
+  let got=0;
+  setTimeout(()=>{if(!got)log('Sensor gerak tidak terbaca. Cek izin Motion sensors di pengaturan situs browser.')},2500);
   addEventListener('devicemotion',e=>{
+   got=1;
    const n=performance.now();if(n-last<33||!conn.open)return;last=n;
    const a=e.acceleration,ag=e.accelerationIncludingGravity,r=e.rotationRate||{};
    const acc=a&&a.x!=null?Math.hypot(a.x,a.y,a.z):(ag?Math.abs(Math.hypot(ag.x,ag.y,ag.z)-9.8):0);
-   conn.send({a:acc,r:Math.hypot(r.alpha||0,r.beta||0,r.gamma||0),g:s.g});
+   const rr=Math.hypot(r.alpha||0,r.beta||0,r.gamma||0);
+   conn.send({a:acc,r:rr,g:s.g});
+   $('dbg').textContent='a '+acc.toFixed(1)+'  r '+rr.toFixed(0)+'  g '+s.g.toFixed(0);
   });
  }
 }
@@ -93,7 +99,7 @@ function host(){
  function go(s,m){S=s;t=0;cool=.7;say(m)}
 
  function step(dt){
-  const hit=inp.a>14||key.sp,edge=hit&&!prevHit&&cool<=0;prevHit=hit;
+  const hit=inp.a>7||key.sp,edge=hit&&!prevHit&&cool<=0;prevHit=hit;
   const rot=Math.max(inp.r||0,key.r?400:0);
   cool-=dt;
   if(S==='idle'){
@@ -128,6 +134,8 @@ function host(){
   if(S==='bite'){x.strokeStyle='#fff';x.beginPath();x.arc(px,py,20+(t*60)%30,0,7);x.stroke()}
   x.fillStyle='#eaf3ee';x.font='22px Georgia';x.textAlign='center';x.fillText(msg,400,40);
   x.textAlign='left';x.font='18px Georgia';x.fillText('Ikan: '+score,16,440);
+  x.font='13px monospace';x.fillStyle='#eaf3ee99';
+  x.fillText('terima: a '+(inp.a||0).toFixed(1)+'  r '+(inp.r||0).toFixed(0)+'  g '+(inp.g||0).toFixed(0)+'  (hentak jika a > 7)',16,20);
   if(S==='reel'){
    x.fillStyle='#0003';x.fillRect(600,420,180,16);
    x.fillStyle=tens>.7?'#e63946':'#f2a541';x.fillRect(600,420,180*tens,16);
